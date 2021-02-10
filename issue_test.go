@@ -45,7 +45,7 @@ func TestNSEC3MixedNextDomain(t *testing.T) {
 	}
 }
 
-func BenchmarkNoNetBuffers(b *testing.B) {
+func benchNetBuffers(b *testing.B, useNetBuffers bool) {
 	HandleFunc("example.org.", HelloServer)
 	defer HandleRemove("example.org.")
 	s, addrstr, _, err := RunLocalTCPServer(":0")
@@ -54,86 +54,43 @@ func BenchmarkNoNetBuffers(b *testing.B) {
 	}
 	defer s.Shutdown()
 
+	emptyBuf := [1000]byte{}
+	buf := emptyBuf[:]
+
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		b.StartTimer()
-
-		m := new(Msg)
-		m.SetQuestion("example.org.", TypeA)
-
-		buf, err := m.Pack()
-		if err != nil {
-			b.Fatal(err)
-		}
 
 		conn, err := net.Dial("tcp", addrstr)
 		if err != nil {
 			b.Fatal(err)
 		}
 
-		msg := make([]byte, 2+len(buf))
-		binary.BigEndian.PutUint16(msg, uint16(len(buf)))
-		copy(msg[2:], buf)
-		_, err = conn.Write(msg)
+		if useNetBuffers {
+			l := make([]byte, 2)
+			binary.BigEndian.PutUint16(l, uint16(len(buf)))
+			_, err = (&net.Buffers{l, buf}).WriteTo(conn)
+		} else {
+			msg := make([]byte, 2+len(buf))
+			binary.BigEndian.PutUint16(msg, uint16(len(buf)))
+			copy(msg[2:], buf)
+			_, err = conn.Write(msg)
+		}
+
 		if err != nil {
 			b.Fatal(err)
 		}
 
-		//l := make([]byte, 2)
-		//binary.BigEndian.PutUint16(l, uint16(len(buf)))
-		//_, err = (&net.Buffers{l, buf}).WriteTo(conn)
-		//if err != nil {
-		//	b.Fatal(err)
-		//}
-
 		conn.Close()
-
 		b.StopTimer()
 	}
 }
 
+func BenchmarkNoNetBuffers(b *testing.B) {
+	benchNetBuffers(b, false)
+}
+
 func BenchmarkNetBuffers(b *testing.B) {
-	HandleFunc("example.org.", HelloServer)
-	defer HandleRemove("example.org.")
-	s, addrstr, _, err := RunLocalTCPServer(":0")
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer s.Shutdown()
-
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		b.StartTimer()
-
-		m := new(Msg)
-		m.SetQuestion("example.org.", TypeA)
-
-		buf, err := m.Pack()
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		conn, err := net.Dial("tcp", addrstr)
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		//msg := make([]byte, 2+len(buf))
-		//binary.BigEndian.PutUint16(msg, uint16(len(buf)))
-		//copy(msg[2:], buf)
-		//_, _ = conn.Write(msg)
-
-		l := make([]byte, 2)
-		binary.BigEndian.PutUint16(l, uint16(len(buf)))
-		_, err = (&net.Buffers{l, buf}).WriteTo(conn)
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		conn.Close()
-
-		b.StopTimer()
-	}
+	benchNetBuffers(b, true)
 }
