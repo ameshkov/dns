@@ -3,6 +3,8 @@ package dns
 // Tests that solve that an specific issue.
 
 import (
+	"encoding/binary"
+	"net"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,43 @@ func TestNSEC3MixedNextDomain(t *testing.T) {
 	out := m.Answer[0].(*NSEC3).NextDomain
 	if in != out {
 		t.Fatalf("expected round trip to produce NextDomain `%s`, instead `%s`", in, out)
+	}
+}
+
+func BenchmarkNetBuffers(b *testing.B) {
+	HandleFunc("example.org.", HelloServer)
+	defer HandleRemove("example.org.")
+	s, addrstr, _, err := RunLocalTCPServer(":0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer s.Shutdown()
+
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		b.StartTimer()
+		m := new(Msg)
+		m.SetQuestion("example.org.", TypeA)
+
+		buf, err := m.Pack()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		conn, err := net.Dial("tcp", addrstr)
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer conn.Close()
+
+		l := make([]byte, 2)
+		binary.BigEndian.PutUint16(l, uint16(len(buf)))
+		_, err = (&net.Buffers{l, buf}).WriteTo(conn)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.StopTimer()
 	}
 }
